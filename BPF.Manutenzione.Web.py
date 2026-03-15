@@ -1,40 +1,57 @@
 import streamlit as st
 import gspread
-from oauth2client.service_account import ServiceAccountCredentials
+from google.oauth2.service_account import Credentials
 import json
 
+# Configurazione pagina
 st.set_page_config(page_title="PIGNANO WEB", layout="wide")
 
 def get_gspread_client():
-    # Recuperiamo il segreto
+    # Carica i segreti
     creds_info = st.secrets["gcp_service_account"]
     
-    # Se Streamlit lo legge come stringa, lo trasformiamo in dizionario
+    # Se Streamlit passa una stringa invece di un dizionario, la convertiamo
     if isinstance(creds_info, str):
         info = json.loads(creds_info)
     else:
         info = dict(creds_info)
     
-    # --- PULIZIA CHIAVE (La "cura" per il padding) ---
-    raw_key = info["private_key"]
-    # Rimuove virgolette extra, trasforma i \n letterali e pulisce gli spazi
-    cleaned_key = raw_key.replace("\\n", "\n").strip()
-    info["private_key"] = cleaned_key
+    # PULIZIA CHIAVE: Trasforma i \n di testo in veri "a capo" per Google
+    if "private_key" in info:
+        info["private_key"] = info["private_key"].replace("\\n", "\n")
     
-    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-    creds = ServiceAccountCredentials.from_json_keyfile_dict(info, scope)
+    scope = [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive"
+    ]
+    
+    # Creazione credenziali
+    creds = Credentials.from_service_account_info(info, scopes=scope)
     return gspread.authorize(creds)
 
-st.title("🏰 PIGNANO WEB")
+st.title("🏰 PIGNANO WEB - Gestione Manutenzioni")
 
 try:
+    # Tentativo di connessione
     client = get_gspread_client()
+    # Apri il foglio Google (Assicurati che il nome sia esatto)
     sh = client.open("Manutenzione_Pignano")
-    st.success("✅ Connessione riuscita! Il padding è sistemato.")
     
-    # Prova a leggere il primo foglio per conferma
-    ws = sh.get_worksheet(0)
-    st.write(f"Siamo connessi al foglio: **{ws.title}**")
+    st.success("✅ Connessione riuscita! Il database è online.")
+    
+    # Esempio: Mostra i dati della prima tabella
+    worksheet = sh.get_worksheet(0)
+    data = worksheet.get_all_records()
+    
+    if data:
+        import pandas as pd
+        df = pd.DataFrame(data)
+        st.subheader(f"Dati da: {worksheet.title}")
+        st.dataframe(df, use_container_width=True)
+    else:
+        st.info("Il foglio è connesso ma sembra vuoto.")
 
 except Exception as e:
-    st.error(f"❌ Errore persistente: {e}")
+    st.error("❌ Errore di connessione")
+    st.info(f"Dettaglio tecnico: {e}")
+    st.warning("Verifica che il foglio Google sia condiviso con l'email dell'account di servizio.")
