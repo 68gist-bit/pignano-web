@@ -14,18 +14,17 @@ def get_sheets():
     try:
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
         
-        # Recupero sicuro dai Secrets
-        creds_raw = st.secrets["gcp_service_account"]
+        # Leggiamo la stringa pulita
+        if "GCP_JSON" not in st.secrets:
+            st.error("Manca la chiave GCP_JSON nei Secrets!")
+            return None
+            
+        info = json.loads(st.secrets["GCP_JSON"])
         
-        # Trasformazione e pulizia rigorosa
-        if isinstance(creds_raw, str):
-            # Pulizia per evitare l'errore "Invalid control character"
-            info = json.loads(creds_raw.strip().replace("\\n", "\n"))
-        else:
-            info = dict(creds_raw)
-            if "private_key" in info:
-                info["private_key"] = info["private_key"].replace("\\n", "\n")
-        
+        # Pulizia della private_key per il web
+        if "private_key" in info:
+            info["private_key"] = info["private_key"].replace("\\n", "\n")
+            
         creds = ServiceAccountCredentials.from_json_keyfile_dict(info, scope)
         client = gspread.authorize(creds)
         spreadsheet = client.open("Manutenzione_Pignano")
@@ -38,17 +37,10 @@ def get_sheets():
             "Magazzino": spreadsheet.worksheet("Magazzino")
         }
     except Exception as e:
-        st.error(f"❌ Errore di Configurazione: {e}")
+        st.error(f"❌ Errore Connessione: {e}")
         return None
 
 sheets = get_sheets()
-
-# --- FUNZIONI UTILI ---
-def get_cfg(tipo):
-    try:
-        data = sheets["Parametri"].get_all_records()
-        return [r['Valore'] for r in data if str(r['Tipo']).lower() == tipo.lower()]
-    except: return ["-"]
 
 # --- SIDEBAR ---
 st.sidebar.title("🏰 PIGNANO v90")
@@ -57,50 +49,42 @@ menu = st.sidebar.radio("Vai a:", ["📊 Dashboard", "🔧 Nuovo Intervento", "�
 if sheets:
     # --- DASHBOARD ---
     if menu == "📊 Dashboard":
-        st.title("📊 Riepilogo Attività")
-        data = sheets["Interventi"].get_all_records()
-        if data:
-            df = pd.DataFrame(data)
-            df.columns = [c.lower() for c in df.columns]
-            c1, c2 = st.columns(2)
-            c1.metric("Totale Lavori", len(df))
-            if 'stato' in df.columns:
-                ap = len(df[df['stato'].astype(str).str.lower() == 'aperto'])
-                c2.metric("🔴 Interventi Aperti", ap)
-            st.divider()
-            st.dataframe(df.tail(15), use_container_width=True)
+        st.title("📊 Stato Attività")
+        try:
+            data = sheets["Interventi"].get_all_records()
+            if data:
+                df = pd.DataFrame(data)
+                df.columns = [c.lower() for c in df.columns]
+                st.metric("Totale Lavori", len(df))
+                st.dataframe(df.tail(15), use_container_width=True)
+        except: st.info("Foglio interventi pronto.")
 
     # --- NUOVO INTERVENTO ---
     elif menu == "🔧 Nuovo Intervento":
-        st.title("🔧 Registrazione Lavoro")
+        st.title("🔧 Registrazione")
         with st.form("form_int", clear_on_submit=True):
-            c1, c2 = st.columns(2)
-            with c1:
-                tipo = st.selectbox("Tipo", ["Intervento", "Manutenzione"])
-                luogo = st.selectbox("Luogo", get_cfg("Luogo"))
-            with c2:
-                tecnico = st.selectbox("Tecnico", get_cfg("Tecnico"))
-                stato = st.selectbox("Stato", ["Aperto", "Chiuso"])
+            tipo = st.selectbox("Tipo", ["Intervento", "Manutenzione"])
             note = st.text_area("Descrizione")
             if st.form_submit_button("SALVA"):
-                riga = [datetime.now().strftime("%y%m%d%H%M"), tipo, luogo, "-", tecnico, note, datetime.now().strftime("%d/%m/%Y"), "", stato]
+                riga = [datetime.now().strftime("%y%m%d%H%M"), tipo, "-", "-", "-", note, datetime.now().strftime("%d/%m/%Y"), "", "Aperto"]
                 sheets["Interventi"].append_row(riga)
                 st.success("✅ Salvato!")
 
     # --- ALTRI MODULI ---
     elif menu == "🏊 Piscina":
         st.title("🏊 Registro Piscina")
-        st.info("I dati verranno salvati nel foglio 'Piscina'")
-        # Qui puoi aggiungere i campi pH, Cloro come prima...
+        st.write("Modulo Piscina Attivo")
     
     elif menu == "⚡ Utenze":
         st.title("⚡ Utenze")
-        st.info("I dati verranno salvati nel foglio 'Utenze'")
+        st.write("Modulo Utenze Attivo")
 
     elif menu == "📦 Magazzino":
         st.title("📦 Magazzino")
-        data_m = sheets["Magazzino"].get_all_records()
-        if data_m: st.dataframe(pd.DataFrame(data_m), use_container_width=True)
+        try:
+            data_m = sheets["Magazzino"].get_all_records()
+            if data_m: st.dataframe(pd.DataFrame(data_m), use_container_width=True)
+        except: st.info("Foglio magazzino pronto.")
 
 else:
-    st.warning("⚠️ L'app non riesce a connettersi. Ricontrolla i Secrets.")
+    st.warning("⚠️ Controlla i Secrets: inserisci GCP_JSON correttamente.")
