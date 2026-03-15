@@ -10,29 +10,30 @@ import io
 # --- CONFIGURAZIONE PAGINA ---
 st.set_page_config(page_title="Pignano Web Management", layout="wide", page_icon="🏰")
 
-# --- CONNESSIONE GOOGLE (Versione Web Corretta) ---
+# --- CONNESSIONE GOOGLE ---
 @st.cache_resource
 def get_sheets():
     try:
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
         
-        # Recupera la chiave dai Secrets di Streamlit
+        # Carica le credenziali dai Secrets di Streamlit
         if "gcp_service_account" in st.secrets:
             creds_info = st.secrets["gcp_service_account"]
             
-            # Se la chiave è una stringa (testo), la puliamo dai simboli \n che creano errore padding
+            # Trasformiamo i segreti in un dizionario pulito
             if isinstance(creds_info, str):
+                # Rimuove eventuali a capo e sistema la chiave privata
                 info = json.loads(creds_info.replace("\\n", "\n"))
             else:
-                # Se Streamlit la legge già come oggetto, puliamo solo la private_key
                 info = dict(creds_info)
                 if "private_key" in info:
                     info["private_key"] = info["private_key"].replace("\\n", "\n")
             
+            # USA IL METODO CHE FUNZIONAVA PRIMA
             creds = ServiceAccountCredentials.from_json_keyfile_dict(info, scope)
             client = gspread.authorize(creds)
             
-            # Apertura del file Google Sheet
+            # Apertura file
             spreadsheet = client.open("Manutenzione_Pignano")
             return {
                 "Interventi": spreadsheet.worksheet("Interventi"),
@@ -42,7 +43,7 @@ def get_sheets():
             st.error("Chiave Google non trovata nei Secrets!")
             return None
     except Exception as e:
-        st.error(f"Errore di connessione: {e}")
+        st.error(f"Errore di connessione a Google Sheets: {e}")
         return None
 
 sheets = get_sheets()
@@ -55,28 +56,11 @@ def get_cfg(tipo):
     except:
         return []
 
-# --- FUNZIONE GENERAZIONE PDF ---
-def create_pdf(df):
-    pdf = FPDF()
-    pdf.add_page()
-    pdf.set_font("Arial", "B", 16)
-    pdf.cell(190, 10, "Report Interventi Pignano", ln=True, align="C")
-    pdf.ln(10)
-    pdf.set_font("Arial", size=10)
-    
-    for index, row in df.iterrows():
-        # Creiamo una riga di testo per ogni intervento nel PDF
-        riga_testo = f"ID: {row.get('id', '')} | Data: {row.get('data', '')} | Luogo: {row.get('luogo', '')} | Stato: {row.get('stato', '')}"
-        pdf.cell(190, 8, riga_testo.encode('latin-1', 'replace').decode('latin-1'), border=1, ln=True)
-    
-    return pdf.output(dest="S").encode("latin-1")
-
 # --- INTERFACCIA ---
 st.sidebar.title("🏰 PIGNANO WEB")
 menu = st.sidebar.radio("Navigazione", ["📊 Dashboard", "🔧 Nuovo Intervento"])
 
 if sheets:
-    # --- SCHEDA DASHBOARD ---
     if menu == "📊 Dashboard":
         st.title("Stato Manutenzioni")
         try:
@@ -84,34 +68,27 @@ if sheets:
             if data:
                 df = pd.DataFrame(data)
                 
-                # Uniformiamo i nomi delle colonne in minuscolo per non avere errori di ricerca
-                df.columns = [c.lower() for c in df.columns]
-                
-                # --- LE CASELLE (METRICHE) ---
+                # Caselle Metriche (Stato)
                 col1, col2, col3 = st.columns(3)
-                col1.metric("Totale Lavori", len(df))
+                col1.metric("Totale Interventi", len(df))
                 
-                if 'stato' in df.columns:
-                    aperti = len(df[df['stato'].astype(str).str.lower() == 'aperto'])
-                    chiusi = len(df[df['stato'].astype(str).str.lower() == 'chiuso'])
-                    col2.metric("🔴 MANUTENZIONI APERTE", aperti)
-                    col3.metric("🟢 LAVORI CONCLUSI", chiusi)
+                # Rendiamo le colonne minuscole per i calcoli
+                df_temp = df.copy()
+                df_temp.columns = [c.lower() for c in df_temp.columns]
+                
+                if 'stato' in df_temp.columns:
+                    aperti = len(df_temp[df_temp['stato'].astype(str).str.lower() == 'aperto'])
+                    chiusi = len(df_temp[df_temp['stato'].astype(str).str.lower() == 'chiuso'])
+                    col2.metric("🔴 Manutenzioni Aperte", aperti)
+                    col3.metric("🟢 Lavori Chiusi", chiusi)
                 
                 st.divider()
-                
-                # Tabella dati principale
                 st.dataframe(df, use_container_width=True)
-                
-                # Bottone per il PDF
-                if st.button("Genera Report PDF"):
-                    pdf_bytes = create_pdf(df)
-                    st.download_button("Scarica PDF", data=pdf_bytes, file_name="report_pignano.pdf", mime="application/pdf")
             else:
                 st.info("Nessun dato presente nel foglio Interventi.")
         except Exception as e:
-            st.error(f"Errore caricamento dati: {e}")
+            st.error(f"Errore nel caricamento dati: {e}")
 
-    # --- SCHEDA NUOVO INTERVENTO ---
     elif menu == "🔧 Nuovo Intervento":
         st.title("Registra Nuovo Intervento")
         with st.form("form_lavoro", clear_on_submit=True):
@@ -128,8 +105,6 @@ if sheets:
             if st.form_submit_button("SALVA SU GOOGLE"):
                 data_oggi = datetime.now().strftime("%d/%m/%Y")
                 id_lavoro = datetime.now().strftime("%y%m%d%H%M")
-                
-                # Riga da aggiungere (assicurati che l'ordine delle colonne nel foglio sia questo)
                 nuova_riga = [id_lavoro, "Intervento", luogo, attrezzo, operatore, note, data_oggi, "", stato]
                 
                 try:
