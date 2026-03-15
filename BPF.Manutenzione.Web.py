@@ -15,32 +15,19 @@ st.set_page_config(page_title="Pignano Web Management", layout="wide", page_icon
 def get_sheets():
     try:
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-        
         # Carica le credenziali dai Secrets di Streamlit
         if "gcp_service_account" in st.secrets:
-            creds_info = st.secrets["gcp_service_account"]
-            
-            # Trasformiamo i segreti in un dizionario pulito
-            if isinstance(creds_info, str):
-                # Rimuove eventuali a capo e sistema la chiave privata
-                info = json.loads(creds_info.replace("\\n", "\n"))
-            else:
-                info = dict(creds_info)
-                if "private_key" in info:
-                    info["private_key"] = info["private_key"].replace("\\n", "\n")
-            
-            # USA IL METODO CHE FUNZIONAVA PRIMA
+            info = json.loads(st.secrets["gcp_service_account"])
             creds = ServiceAccountCredentials.from_json_keyfile_dict(info, scope)
             client = gspread.authorize(creds)
-            
-            # Apertura file
+            # Assicurati che il nome del file Google Sheet sia ESATTAMENTE questo:
             spreadsheet = client.open("Manutenzione_Pignano")
             return {
                 "Interventi": spreadsheet.worksheet("Interventi"),
                 "Parametri": spreadsheet.worksheet("Parametri")
             }
         else:
-            st.error("Chiave Google non trovata nei Secrets!")
+            st.error("Chiave Google non trovata nei Secrets di Streamlit!")
             return None
     except Exception as e:
         st.error(f"Errore di connessione a Google Sheets: {e}")
@@ -52,7 +39,7 @@ sheets = get_sheets()
 def get_cfg(tipo):
     try:
         data = sheets["Parametri"].get_all_records()
-        return [r['Valore'] for r in data if str(r['Tipo']).lower() == tipo.lower()]
+        return [r['Valore'] for r in data if r['Tipo'].lower() == tipo.lower()]
     except:
         return []
 
@@ -67,22 +54,6 @@ if sheets:
             data = sheets["Interventi"].get_all_records()
             if data:
                 df = pd.DataFrame(data)
-                
-                # Caselle Metriche (Stato)
-                col1, col2, col3 = st.columns(3)
-                col1.metric("Totale Interventi", len(df))
-                
-                # Rendiamo le colonne minuscole per i calcoli
-                df_temp = df.copy()
-                df_temp.columns = [c.lower() for c in df_temp.columns]
-                
-                if 'stato' in df_temp.columns:
-                    aperti = len(df_temp[df_temp['stato'].astype(str).str.lower() == 'aperto'])
-                    chiusi = len(df_temp[df_temp['stato'].astype(str).str.lower() == 'chiuso'])
-                    col2.metric("🔴 Manutenzioni Aperte", aperti)
-                    col3.metric("🟢 Lavori Chiusi", chiusi)
-                
-                st.divider()
                 st.dataframe(df, use_container_width=True)
             else:
                 st.info("Nessun dato presente nel foglio Interventi.")
@@ -91,7 +62,7 @@ if sheets:
 
     elif menu == "🔧 Nuovo Intervento":
         st.title("Registra Nuovo Intervento")
-        with st.form("form_lavoro", clear_on_submit=True):
+        with st.form("form_lavoro"):
             col1, col2 = st.columns(2)
             with col1:
                 operatore = st.selectbox("Operatore", get_cfg("Tecnico"))
@@ -103,6 +74,7 @@ if sheets:
             note = st.text_area("Descrizione intervento")
             
             if st.form_submit_button("SALVA SU GOOGLE"):
+                # Crea la riga da aggiungere al foglio
                 data_oggi = datetime.now().strftime("%d/%m/%Y")
                 id_lavoro = datetime.now().strftime("%y%m%d%H%M")
                 nuova_riga = [id_lavoro, "Intervento", luogo, attrezzo, operatore, note, data_oggi, "", stato]
@@ -110,7 +82,6 @@ if sheets:
                 try:
                     sheets["Interventi"].append_row(nuova_riga)
                     st.success("✅ Intervento salvato con successo!")
-                    st.balloons()
                 except Exception as e:
                     st.error(f"Errore durante il salvataggio: {e}")
 else:
